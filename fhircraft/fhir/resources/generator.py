@@ -4,9 +4,8 @@ import os
 import re
 import sys
 from collections import defaultdict
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
-from importlib.metadata import version
 from typing import (
     Annotated,
     Any,
@@ -19,6 +18,7 @@ from typing import (
     get_origin,
 )
 
+import annotated_types
 from jinja2 import Environment, FileSystemLoader, Template
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
@@ -32,6 +32,57 @@ __all__ = ["generator", "generate_resource_model_code", "CodeGenerator"]
 FACTORY_MODULE = get_module_name(FHIRModelFactory)
 LEFT_TO_RIGHT_COMPLEX = "FieldInfo(annotation=NoneType, required=True, metadata=[_PydanticGeneralMetadata(union_mode='left_to_right')])"
 LEFT_TO_RIGHT_SIMPLE = "Field(union_mode='left_to_right')"
+
+
+@dataclass(frozen=True)
+class _ConstraintMetadata:
+    """Pydantic field constraint values recovered from a ``FieldInfo.metadata`` list."""
+
+    min_length: int | None
+    """ The minimum length (item count for lists) of the field. """
+
+    max_length: int | None
+    """ The maximum length (item count for lists) of the field. """
+
+    ge: int | float | None
+    """ The inclusive lower bound of the field value. """
+
+    le: int | float | None
+    """ The inclusive upper bound of the field value. """
+
+
+def _extract_constraint_metadata(metadata: List[Any]) -> _ConstraintMetadata:
+    """
+    Extract the constraint values from a ``FieldInfo.metadata`` list.
+
+    Pydantic stores the ``min_length``/``max_length``/``ge``/``le`` keywords given to
+    ``Field(...)`` as ``annotated_types`` constraint objects on ``FieldInfo.metadata``.
+    Recover them so they can be re-emitted as ``Field(...)`` keywords in generated code.
+    Non-numeric ``ge``/``le`` bounds are skipped as they cannot be rendered as literals.
+    """
+    min_length: int | None = None
+    max_length: int | None = None
+    ge: int | float | None = None
+    le: int | float | None = None
+    for entry in metadata:
+        if isinstance(entry, annotated_types.MinLen):
+            min_length = entry.min_length
+        elif isinstance(entry, annotated_types.MaxLen):
+            max_length = entry.max_length
+        elif isinstance(entry, annotated_types.Ge) and isinstance(
+            entry.ge, (int, float)
+        ):
+            ge = entry.ge
+        elif isinstance(entry, annotated_types.Le) and isinstance(
+            entry.le, (int, float)
+        ):
+            le = entry.le
+    return _ConstraintMetadata(
+        min_length=min_length,
+        max_length=max_length,
+        ge=ge,
+        le=le,
+    )
 
 
 class CodeGenerator:
@@ -648,6 +699,7 @@ class CodeGenerator:
                         info.default_factory
                     )
 
+                constraint_metadata = _extract_constraint_metadata(info.metadata)
                 subdata[field] = {
                     "annotation": annotation_string,
                     "title": str(info.title) if info.title is not None else None,
@@ -657,6 +709,10 @@ class CodeGenerator:
                     "alias": info.alias,
                     "default": default,
                     "default_factory": default_factory,
+                    "min_length": constraint_metadata.min_length,
+                    "max_length": constraint_metadata.max_length,
+                    "ge": constraint_metadata.ge,
+                    "le": constraint_metadata.le,
                 }
 
             # Track Field import if there are any fields
@@ -853,10 +909,6 @@ class CodeGenerator:
             imports=grouped_imports,
             alias_imports=self.alias_import_statements,
             include_validators=include_validators,
-            metadata={
-                "version": version("fhircraft"),
-                "timestamp": datetime.now(),
-            },
         )
         # Replace the full module specification for any modules imported
         # First, collect all imported objects for class name cleanup

@@ -1,6 +1,7 @@
 import keyword
 from unittest.mock import MagicMock
 import pytest
+from annotated_types import MaxLen
 from typing import Any, List, Optional, get_args, get_origin
 from pydantic.aliases import AliasChoices
 from fhircraft.fhir.resources.datatypes.R4 import core, complex, primitive
@@ -49,6 +50,9 @@ def make_node(
     default_value: Any = None,
     base_is_array: Optional[bool] = None,
     is_prohibited: bool = False,
+    min_value: Any = None,
+    max_value: Any = None,
+    max_length: int | None = None,
 ):
     """Return a minimal mock of ElementNode."""
     node = MagicMock()
@@ -62,7 +66,9 @@ def make_node(
     node.is_prohibited = is_prohibited
     node.fixed = None
     node.pattern = None
-    node.max_length = None
+    node.max_length = max_length
+    node.min_value = min_value
+    node.max_value = max_value
     return node
 
 
@@ -438,7 +444,7 @@ def test_build_field_information__narrowing_still_applies_cardinality_constraint
     )
     info = Builder.build_field_information("field", node, str)
     assert info.min_length == 1
-    assert info.max_length == 1
+    assert info.max_cardinality == 1
 
 
 def test_build_field_information__widening_no_list_constraints():
@@ -447,7 +453,83 @@ def test_build_field_information__widening_no_list_constraints():
     )
     info = Builder.build_field_information("field", node, str)
     assert info.min_length is None
+    assert info.max_cardinality is None
     assert info.max_length is None
+
+
+def test_build_field_information__array_min_cardinality_zero_is_suppressed():
+    node = make_node(is_array=True, min_cardinality=0)
+    info = Builder.build_field_information("field", node, str)
+    assert info.min_length is None
+
+
+def test_build_field_information__array_min_cardinality_one():
+    node = make_node(is_array=True, min_cardinality=1)
+    info = Builder.build_field_information("field", node, str)
+    assert info.min_length == 1
+
+
+def test_build_field_information__array_max_cardinality_is_not_max_length():
+    node = make_node(is_array=True, max_cardinality=5)
+    info = Builder.build_field_information("field", node, str)
+    assert info.max_cardinality == 5
+    assert info.max_length is None
+
+
+def test_build_field_information__scalar_max_length_is_not_max_cardinality():
+    node = make_node(is_array=False, max_length=100)
+    info = Builder.build_field_information("field", node, str)
+    assert info.max_length == 100
+    assert info.max_cardinality is None
+
+
+def test_build_field_information__array_unbounded_max_cardinality():
+    node = make_node(is_array=True, max_cardinality=None)
+    info = Builder.build_field_information("field", node, str)
+    assert info.max_cardinality is None
+
+
+def test_build_field_information__unbounded_array_suppresses_scalar_max_length():
+    node = make_node(is_array=True, max_cardinality=None, max_length=5)
+    info = Builder.build_field_information("field", node, str)
+    assert info.max_length is None
+    assert info.max_cardinality is None
+    _, field_info = info.as_pydantic_definition()
+    assert not any(isinstance(meta, MaxLen) for meta in field_info.metadata)
+
+
+def test_build_field_information__array_absent_max_cardinality():
+    from pydantic_core import PydanticUndefined
+
+    node = make_node(is_array=True, max_cardinality=PydanticUndefined)
+    info = Builder.build_field_information("field", node, str)
+    assert info.max_cardinality is None
+
+
+def test_build_field_information__prohibited_with_base_is_array():
+    node = make_node(
+        is_prohibited=True, base_is_array=True, min_cardinality=0, max_cardinality=0
+    )
+    info = Builder.build_field_information("field", node, str)
+    assert info.min_length is None
+
+
+def test_build_field_information__min_max_value_coerced_to_python_scalars():
+    node = make_node(
+        min_value=primitive.Integer(value=1), max_value=primitive.Integer(value=10)
+    )
+    info = Builder.build_field_information("field", node, int)
+    assert info.min_value == 1
+    assert type(info.min_value) is int
+    assert info.max_value == 10
+    assert type(info.max_value) is int
+
+
+def test_build_field_information__non_numeric_min_max_value_skipped():
+    node = make_node(min_value=primitive.Date(value="2020-01-01"))
+    info = Builder.build_field_information("field", node, str)
+    assert info.min_value is None
+    assert info.max_value is None
 
 
 # ==================================================================

@@ -125,6 +125,101 @@ class TestJinjaTemplateRendering(unittest.TestCase):
         """
         self.assertBlockInCode(expected_block, model)
 
+    def test_field_with_min_length(self):
+        # Create model dynamically
+        model = create_model(
+            "ModelWithMinLength",
+            items=(
+                Optional[List[primitives.Integer]],
+                Field(default=None, min_length=1),
+            ),
+        )
+        # Expected code block
+        expected_block = """
+        class ModelWithMinLength(BaseModel):
+            items: Optional[List[fhir.integer]] = Field(
+                default=None,
+                min_length=1,
+            )
+        """
+        self.assertBlockInCode(expected_block, model)
+
+    def test_field_with_max_length_on_list(self):
+        # Create model dynamically
+        model = create_model(
+            "ModelWithMaxLength",
+            items=(
+                Optional[List[primitives.Integer]],
+                Field(default=None, max_length=5),
+            ),
+        )
+        # Expected code block
+        expected_block = """
+        class ModelWithMaxLength(BaseModel):
+            items: Optional[List[fhir.integer]] = Field(
+                default=None,
+                max_length=5,
+            )
+        """
+        self.assertBlockInCode(expected_block, model)
+
+    def test_field_with_ge(self):
+        # Create model dynamically
+        model = create_model(
+            "ModelWithGe",
+            count=(
+                Optional[primitives.Integer],
+                Field(default=None, ge=0),
+            ),
+        )
+        # Expected code block
+        expected_block = """
+        class ModelWithGe(BaseModel):
+            count: Optional[fhir.integer] = Field(
+                default=None,
+                ge=0,
+            )
+        """
+        self.assertBlockInCode(expected_block, model)
+
+    def test_field_with_le(self):
+        # Create model dynamically
+        model = create_model(
+            "ModelWithLe",
+            count=(
+                Optional[primitives.Integer],
+                Field(default=None, le=100),
+            ),
+        )
+        # Expected code block
+        expected_block = """
+        class ModelWithLe(BaseModel):
+            count: Optional[fhir.integer] = Field(
+                default=None,
+                le=100,
+            )
+        """
+        self.assertBlockInCode(expected_block, model)
+
+    def test_field_without_constraints_emits_no_constraint_kwargs(self):
+        import re
+
+        # Create model dynamically
+        model = create_model(
+            "ModelWithoutConstraints",
+            note=(
+                Optional[primitives.String],
+                Field(default=None),
+            ),
+        )
+        code = generate_resource_model_code(model)
+        # No constraint keyword may appear in the generated Field(...) call
+        for kwarg in ("min_length", "max_length", "ge", "le"):
+            self.assertIsNone(
+                re.search(rf"\b{kwarg}=", code),
+                f"Unexpected `{kwarg}=` in generated code:\n{code}",
+            )
+
     def test_model_with_default_factory_model(self):
         # Create model dynamically
         model = create_model(

@@ -513,13 +513,11 @@ See the [Pydantic JSON schema documentation](https://docs.pydantic.dev/latest/co
 
 ### Generated Code Structure
 
-The generated code follows a consistent structure. It starts with imports, then defines models in dependency order so that base classes appear before derived classes. Each model includes field definitions with type annotations, default values, and metadata.
+The generated code follows a consistent structure. It starts with imports, then defines models in dependency order so that base classes appear before derived classes. Each model includes field definitions with type annotations, default values, metadata, and constraint keywords (`min_length`, `max_length`, `ge`, `le`) derived from the profile's cardinality and value constraints.
 
 Here is what the generated code looks like:
 
 ```python
-# Generated automatically - includes timestamp and version
-
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from fhircraft.fhir.resources.datatypes.R4.complex import Identifier, HumanName
@@ -529,12 +527,14 @@ class Patient(BaseModel):
     
     identifier: List[Identifier] = Field(
         ...,
-        description="An identifier for this patient"
+        description="An identifier for this patient",
+        min_length=1
     )
     
     name: List[HumanName] = Field(
         ...,
-        description="A name associated with the patient"
+        description="A name associated with the patient",
+        min_length=1
     )
     
     gender: Optional[str] = Field(
