@@ -518,8 +518,6 @@ The generated code follows a consistent structure. It starts with imports, then 
 Here is what the generated code looks like:
 
 ```python
-# Generated automatically - includes timestamp and version
-
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from fhircraft.fhir.resources.datatypes.R4.complex import Identifier, HumanName
