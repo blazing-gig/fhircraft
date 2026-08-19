@@ -19,7 +19,7 @@ import keyword
 
 from dataclasses import dataclass, field as dc_field
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic.aliases import AliasChoices
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
@@ -81,6 +81,27 @@ FHIRPATH_TYPE_MAPPING: dict[str, type] = {
 }
 
 _Unset: Any = PydanticUndefined
+
+
+def _coerce_constraint_scalar(value: Any) -> int | float | None:
+    """
+    Extract a plain Python numeric scalar from an ElementDefinition ``minValue[x]``/``maxValue[x]``.
+
+    The definition delivers these verbatim: numeric choices arrive as fhircraft
+    primitive models (e.g. ``Integer``), whose raw value is exposed via ``.value``.
+    Non-numeric choices (date, dateTime, time, instant, Quantity) cannot be
+    expressed as Pydantic ``ge``/``le`` constraints and yield ``None``.
+    """
+    if isinstance(value, BaseModel):
+        # fhircraft primitives expose their raw Python value as `.value`;
+        # other models (e.g. Quantity) have no scalar equivalent.
+        value = getattr(value, "value", None)
+    if isinstance(value, bool):
+        # bool is an int subclass but is never a numeric bound
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    return None
 
 
 @dataclass
@@ -154,14 +175,18 @@ class FieldInformation:
     """ The description of the field. """
 
     min_length: int | None = None
-    """ The minimum length of the field. """
+    """ The minimum number of items for an array field (``ElementDefinition.min``). """
 
     max_length: int | None = None
-    """ The maximum length of the field. """
-    min_value: int | None = None
+    """ The maximum character length of a scalar string/bytes value (``ElementDefinition.maxLength``). """
+
+    max_cardinality: int | None = None
+    """ The maximum number of items for an array field (``ElementDefinition.max``). """
+
+    min_value: int | float | None = None
     """ The minimum value of the field. """
 
-    max_value: int | None = None
+    max_value: int | float | None = None
     """ The maximum value of the field. """
 
     def as_pydantic_definition(self) -> tuple[Any, FieldInfo]:
@@ -173,7 +198,15 @@ class FieldInformation:
                 validation_alias=self.validation_alias,
                 description=self.description,
                 min_length=self.min_length,
-                max_length=self.max_length,
+                # Pydantic's `max_length` keyword is overloaded: on a list-typed field
+                # it constrains the number of items, on a string/bytes field the value
+                # length. Array cardinality takes precedence on list fields; the scalar
+                # string maxLength applies otherwise.
+                max_length=(
+                    self.max_cardinality
+                    if self.max_cardinality is not None
+                    else self.max_length
+                ),
                 ge=self.min_value,
                 le=self.max_value,
             ),
@@ -273,7 +306,14 @@ class Builder(ABC):
             - If the field is an array and a default is set, it is converted to a list.
             - Arrays are annotated as List[type].
             - All fields are made Optional to enforce optionality.
-            - Min/max cardinality constraints only apply to array fields.
+            - Min/max cardinality constraints (`min_length`/`max_cardinality`) only apply
+              to array fields; a zero minimum cardinality is suppressed since it
+              constrains nothing.
+            - `max_length` carries the scalar string-length constraint
+              (`ElementDefinition.maxLength`) and is independent of cardinality.
+            - Numeric min/max values are coerced to plain Python scalars; non-numeric
+              minValue[x]/maxValue[x] choices (dates, quantities, …) are skipped as they
+              cannot be expressed as Pydantic `ge`/`le` constraints.
         """
 
         if default is _Unset:
@@ -308,11 +348,23 @@ class Builder(ABC):
             alias=alias,
             validation_alias=validation_alias,
             description=description or node.documentation,
-            min_length=node.min_cardinality if effective_is_array else None,
-            max_length=node.max_length
-            or (node.max_cardinality if effective_is_array else None),
-            min_value=node.min_value,
-            max_value=node.max_value,
+            min_length=(
+                node.min_cardinality
+                if (effective_is_array and node.min_cardinality)
+                else None
+            ),
+            max_cardinality=(
+                node.max_cardinality
+                if (
+                    effective_is_array
+                    and node.max_cardinality is not PydanticUndefined
+                    and node.max_cardinality is not None
+                )
+                else None
+            ),
+            max_length=node.max_length,
+            min_value=_coerce_constraint_scalar(node.min_value),
+            max_value=_coerce_constraint_scalar(node.max_value),
         )
 
     @staticmethod
