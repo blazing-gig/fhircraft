@@ -178,7 +178,7 @@ class FieldInformation:
     """ The minimum number of items for an array field (``ElementDefinition.min``). """
 
     max_length: int | None = None
-    """ The maximum character length of a scalar string/bytes value (``ElementDefinition.maxLength``). """
+    """ The maximum character length of a scalar string/bytes value (``ElementDefinition.maxLength``). Never set on array fields. """
 
     max_cardinality: int | None = None
     """ The maximum number of items for an array field (``ElementDefinition.max``). """
@@ -200,8 +200,10 @@ class FieldInformation:
                 min_length=self.min_length,
                 # Pydantic's `max_length` keyword is overloaded: on a list-typed field
                 # it constrains the number of items, on a string/bytes field the value
-                # length. Array cardinality takes precedence on list fields; the scalar
-                # string maxLength applies otherwise.
+                # length. The two sources are mutually exclusive by construction:
+                # `max_cardinality` is only set on array fields and `max_length` only
+                # on non-array fields, so a list field never receives a scalar
+                # string-length constraint as its item count.
                 max_length=(
                     self.max_cardinality
                     if self.max_cardinality is not None
@@ -310,7 +312,10 @@ class Builder(ABC):
               to array fields; a zero minimum cardinality is suppressed since it
               constrains nothing.
             - `max_length` carries the scalar string-length constraint
-              (`ElementDefinition.maxLength`) and is independent of cardinality.
+              (`ElementDefinition.maxLength`) and is independent of cardinality; it
+              is suppressed on array fields, where Pydantic would misread it as an
+              item-count limit (per-element string length on repeating elements is
+              not expressible via `Field(max_length=...)`).
             - Numeric min/max values are coerced to plain Python scalars; non-numeric
               minValue[x]/maxValue[x] choices (dates, quantities, …) are skipped as they
               cannot be expressed as Pydantic `ge`/`le` constraints.
@@ -362,7 +367,7 @@ class Builder(ABC):
                 )
                 else None
             ),
-            max_length=node.max_length,
+            max_length=None if effective_is_array else node.max_length,
             min_value=_coerce_constraint_scalar(node.min_value),
             max_value=_coerce_constraint_scalar(node.max_value),
         )

@@ -1,6 +1,7 @@
 import keyword
 from unittest.mock import MagicMock
 import pytest
+from annotated_types import MaxLen
 from typing import Any, List, Optional, get_args, get_origin
 from pydantic.aliases import AliasChoices
 from fhircraft.fhir.resources.datatypes.R4 import core, complex, primitive
@@ -486,6 +487,15 @@ def test_build_field_information__array_unbounded_max_cardinality():
     node = make_node(is_array=True, max_cardinality=None)
     info = Builder.build_field_information("field", node, str)
     assert info.max_cardinality is None
+
+
+def test_build_field_information__unbounded_array_suppresses_scalar_max_length():
+    node = make_node(is_array=True, max_cardinality=None, max_length=5)
+    info = Builder.build_field_information("field", node, str)
+    assert info.max_length is None
+    assert info.max_cardinality is None
+    _, field_info = info.as_pydantic_definition()
+    assert not any(isinstance(meta, MaxLen) for meta in field_info.metadata)
 
 
 def test_build_field_information__array_absent_max_cardinality():
